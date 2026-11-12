@@ -1,0 +1,24 @@
+body { font-family: Arial, sans-serif; background: #eef2ff; margin: 0; padding: 20px; color: #222; }
+.card { max-width: 640px; margin: 0 auto; background: #fff; padding: 24px 28px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.1); }
+.card.wide { max-width: 1000px; }
+nav { margin-bottom: 12px; }
+nav a { margin-right: 16px; color: #4338ca; text-decoration: none; font-size: 14px; }
+nav a:hover { text-decoration: underline; }
+h1 { margin-top: 0; color: #4338ca; }
+fieldset { border: 1px solid #c7d2fe; border-radius: 8px; margin: 16px 0; }
+legend { font-weight: bold; padding: 0 6px; }
+label { display: block; margin: 6px 0; }
+input[type=text], input[type=email], input[type=password], select, textarea { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #aaa; border-radius: 6px; }
+button, .btn { background: #4338ca; color: #fff; border: 0; padding: 10px 22px; border-radius: 6px; font-size: 16px; cursor: pointer; text-decoration: none; display: inline-block; }
+button:hover, .btn:hover { background: #3730a3; }
+button.danger { background: #dc2626; padding: 6px 12px; font-size: 14px; }
+button.danger:hover { background: #b91c1c; }
+button.link { background: #6b7280; padding: 6px 12px; font-size: 14px; }
+.errors { background: #fee2e2; border: 1px solid #fca5a5; padding: 10px 16px; border-radius: 8px; }
+.ok { background: #dcfce7; border: 1px solid #86efac; padding: 16px; border-radius: 8px; }
+.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
+.toolbar form { margin: 0; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { border: 1px solid #c7d2fe; padding: 8px; text-align: left; vertical-align: top; }
+th { background: #e0e7ff; }
+td .q { color: #555; }
