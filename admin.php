@@ -6,6 +6,7 @@ require_once __DIR__ . '/functions.php';
 
 session_start();
 
+$dbError = db_error();   // null, якщо база даних працює
 $loginError = '';
 
 // ----- Обробка POST: вхід, вихід, видалення -----
@@ -28,8 +29,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: admin.php');
             exit;
         }
-        if ($action === 'delete') {
-            $ok = delete_response(post_string($_POST, 'file'));
+        if ($action === 'delete' && $dbError === null) {
+            $ok = delete_response((int) post_string($_POST, 'id'));
             $_SESSION['flash'] = $ok ? 'Відповідь видалено.' : 'Не вдалося видалити відповідь.';
             header('Location: admin.php');
             exit;
@@ -38,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // ----- Експорт (лише для адміністратора) -----
-if (is_admin() && isset($_GET['export'])) {
+if (is_admin() && $dbError === null && isset($_GET['export'])) {
     $format = $_GET['export'];
     if ($format === 'json') {
         export_json(load_responses());
@@ -77,7 +78,7 @@ include __DIR__ . '/header.php';
     </form>
 
 <?php else: ?>
-    <?php $responses = load_responses(); ?>
+    <?php $responses = $dbError === null ? load_responses() : []; ?>
 
     <?php if ($flash !== ''): ?>
         <div class="ok"><?= h($flash) ?></div>
@@ -94,7 +95,10 @@ include __DIR__ . '/header.php';
         </form>
     </div>
 
-    <?php if (!$responses): ?>
+    <?php if ($dbError !== null): ?>
+        <div class="errors">Не вдалося підключитися до бази даних: <?= h($dbError) ?>.
+            Увімкніть у php.ini розширення pdo_sqlite і sqlite3.</div>
+    <?php elseif (!$responses): ?>
         <p>Поки що відповідей немає.</p>
     <?php else: ?>
         <table>
@@ -122,7 +126,7 @@ include __DIR__ . '/header.php';
                     <td>
                         <form method="post" action="admin.php" onsubmit="return confirm('Видалити цю відповідь?');">
                             <input type="hidden" name="action" value="delete">
-                            <input type="hidden" name="file" value="<?= h($r['file']) ?>">
+                            <input type="hidden" name="id" value="<?= (int) $r['id'] ?>">
                             <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
                             <button type="submit" class="danger">Видалити</button>
                         </form>

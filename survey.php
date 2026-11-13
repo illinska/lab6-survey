@@ -23,7 +23,7 @@ include __DIR__ . '/header.php';
 
 <?php if ($result['submitted']): ?>
     <div class="ok">
-        <p><strong>Дякуємо, <?= h($v['name']) ?>!</strong> Відповідь збережено.</p>
+        <p><strong>Дякуємо, <?= h($v['name']) ?>!</strong> Відповідь збережено<?= $result['in_db'] ? ' у файл і в базу даних' : ' у файл' ?>.</p>
         <p>Форму заповнено: <strong><?= h($result['saved_at']) ?></strong></p>
         <p><a href="survey.php">Заповнити ще раз</a></p>
     </div>

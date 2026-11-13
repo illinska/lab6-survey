@@ -77,8 +77,8 @@ function validate_survey(array $v): array
     return $errors;
 }
 
-// Зберігає відповідь у файл survey/РРРР-ММ-ДД_ГГ-ХХ-СС_мкс.json
-// Повертає ['file' => ..., 'saved_at' => ...] або null, якщо не вдалося
+// Зберігає відповідь у файл survey/РРРР-ММ-ДД_ГГ-ХХ-СС_мкс.json і в базу даних
+// Повертає ['file' => ..., 'saved_at' => ..., 'in_db' => ...] або null, якщо файл не збережено
 function save_response(array $v): ?array
 {
     if (!is_dir(SURVEY_DIR) && !mkdir(SURVEY_DIR, 0755, true)) {
@@ -108,7 +108,19 @@ function save_response(array $v): ?array
         LOCK_EX
     );
 
-    return $ok === false ? null : ['file' => $fileName, 'saved_at' => $savedAt];
+    if ($ok === false) {
+        return null;
+    }
+
+    // Ту саму відповідь записуємо в базу даних. Якщо база недоступна, файл уже
+    // збережено, а в базу відповідь потрапить пізніше (див. sync_files_to_db).
+    try {
+        $inDb = insert_response_row($fileName, $data);
+    } catch (Throwable $e) {
+        $inDb = false;
+    }
+
+    return ['file' => $fileName, 'saved_at' => $savedAt, 'in_db' => $inDb];
 }
 
 // Обробляє надіслану форму: збір, перевірка, збереження
@@ -120,6 +132,7 @@ function process_survey(array $post): array
         'errors'    => validate_survey($values),
         'submitted' => false,
         'saved_at'  => '',
+        'in_db'     => false,
     ];
 
     if (!$result['errors']) {
@@ -129,6 +142,7 @@ function process_survey(array $post): array
         } else {
             $result['submitted'] = true;
             $result['saved_at'] = $saved['saved_at'];
+            $result['in_db'] = $saved['in_db'];
         }
     }
     return $result;
@@ -204,25 +218,115 @@ function check_csrf(string $token): bool
     return !empty($_SESSION['csrf']) && hash_equals($_SESSION['csrf'], $token);
 }
 
-// ---------- Адмін-панель: відповіді, видалення, експорт ----------
+// ---------- База даних (SQLite через PDO) ----------
 
-// Читає всі JSON-файли з папки survey (найновіші першими)
-function load_responses(): array
+// Підключення до бази. Файл survey.sqlite і таблиця responses створюються автоматично.
+function db(): PDO
 {
-    $list = [];
-    if (!is_dir(SURVEY_DIR)) {
-        return $list;
+    static $pdo = null;
+    if ($pdo === null) {
+        $pdo = new PDO('sqlite:' . DB_FILE);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS responses (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                file         TEXT NOT NULL UNIQUE,
+                submitted_at TEXT NOT NULL,
+                name         TEXT NOT NULL,
+                email        TEXT NOT NULL,
+                power        TEXT NOT NULL,
+                place        TEXT NOT NULL,
+                effects      TEXT NOT NULL,
+                exam_text    TEXT NOT NULL
+            )'
+        );
     }
+    return $pdo;
+}
+
+// Повертає текст помилки, якщо база недоступна, або null, якщо все гаразд
+function db_error(): ?string
+{
+    try {
+        db();
+        return null;
+    } catch (Throwable $e) {
+        return $e->getMessage();
+    }
+}
+
+// Додає відповідь у таблицю responses. Повертає true, якщо рядок додано
+// (INSERT OR IGNORE: якщо файл уже є в базі, повторно не додається)
+function insert_response_row(string $file, array $data): bool
+{
+    $answers = $data['answers'] ?? [];
+    $effects = $answers[QUESTIONS['effects']] ?? [];
+
+    $stmt = db()->prepare(
+        'INSERT OR IGNORE INTO responses (file, submitted_at, name, email, power, place, effects, exam_text)
+         VALUES (:file, :submitted_at, :name, :email, :power, :place, :effects, :exam_text)'
+    );
+    $stmt->execute([
+        ':file'         => $file,
+        ':submitted_at' => (string) ($data['submitted_at'] ?? ''),
+        ':name'         => (string) ($data['name'] ?? ''),
+        ':email'        => (string) ($data['email'] ?? ''),
+        ':power'        => (string) ($answers[QUESTIONS['power']] ?? ''),
+        ':place'        => (string) ($answers[QUESTIONS['place']] ?? ''),
+        ':effects'      => json_encode(is_array($effects) ? $effects : [], JSON_UNESCAPED_UNICODE),
+        ':exam_text'    => (string) ($answers[QUESTIONS['exam_text']] ?? ''),
+    ]);
+    return $stmt->rowCount() > 0;
+}
+
+// Переносить у базу JSON-файли з папки survey, яких там ще немає
+// (наприклад, відповіді, згенеровані ШІ). Повертає кількість доданих.
+function sync_files_to_db(): int
+{
+    if (!is_dir(SURVEY_DIR)) {
+        return 0;
+    }
+    $added = 0;
     foreach (scandir(SURVEY_DIR) as $file) {
         if (!is_valid_response_file($file)) {
             continue;
         }
         $data = json_decode((string) file_get_contents(SURVEY_DIR . '/' . $file), true);
-        if (is_array($data)) {
-            $list[] = ['file' => $file, 'data' => $data];
+        if (is_array($data) && insert_response_row($file, $data)) {
+            $added++;
         }
     }
-    usort($list, fn($a, $b) => strcmp($b['file'], $a['file']));
+    return $added;
+}
+
+// ---------- Адмін-панель: відповіді, видалення, експорт ----------
+
+// Читає всі відповіді з бази (найновіші першими)
+function load_responses(): array
+{
+    sync_files_to_db();
+
+    $rows = db()->query('SELECT * FROM responses ORDER BY file DESC')->fetchAll(PDO::FETCH_ASSOC);
+
+    $list = [];
+    foreach ($rows as $r) {
+        $effects = json_decode($r['effects'], true);
+        $list[] = [
+            'id'   => (int) $r['id'],
+            'file' => $r['file'],
+            'data' => [
+                'submitted_at' => $r['submitted_at'],
+                'name'         => $r['name'],
+                'email'        => $r['email'],
+                'answers'      => [
+                    QUESTIONS['power']     => $r['power'],
+                    QUESTIONS['place']     => $r['place'],
+                    QUESTIONS['effects']   => is_array($effects) ? $effects : [],
+                    QUESTIONS['exam_text'] => $r['exam_text'],
+                ],
+            ],
+        ];
+    }
     return $list;
 }
 
@@ -232,13 +336,25 @@ function is_valid_response_file(string $file): bool
     return (bool) preg_match('/^[0-9_\-]+\.json$/', $file);
 }
 
-function delete_response(string $file): bool
+// Видаляє відповідь з бази і її JSON-файл
+function delete_response(int $id): bool
 {
-    if (!is_valid_response_file($file)) {
+    $stmt = db()->prepare('SELECT file FROM responses WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $file = $stmt->fetchColumn();
+    if ($file === false) {
         return false;
     }
+
+    $del = db()->prepare('DELETE FROM responses WHERE id = :id');
+    $del->execute([':id' => $id]);
+
+    // Файл теж видаляємо, інакше sync_files_to_db() знову додав би його в базу
     $path = SURVEY_DIR . '/' . $file;
-    return is_file($path) && unlink($path);
+    if (is_valid_response_file($file) && is_file($path)) {
+        unlink($path);
+    }
+    return true;
 }
 
 // Експорт усіх відповідей в один JSON-файл (завантажується браузером)
